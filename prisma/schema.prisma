@@ -1,0 +1,269 @@
+// Prisma schema for Promptland - Supabase PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+enum NotificationType {
+  LIKE
+  COMMENT
+  FOLLOW
+}
+
+enum ReportStatus {
+  PENDING
+  RESOLVED
+}
+
+model User {
+  id        String   @id // Supabase Auth user id (UUID as string)
+  email     String   @unique
+  username  String   @unique
+  fullName  String
+
+  avatarUrl String?
+  coverUrl  String?
+
+  bio       String?
+  website   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  prompts      Prompt[]
+  comments     Comment[]
+  likes        Like[]
+  commentLikes CommentLike[]
+
+  // Follow relations (self-referential many-to-many via Follows model)
+  followers Follows[] @relation("following")
+  following Follows[] @relation("follower")
+
+  // Notifications
+  notifications Notification[] @relation("recipient")
+  issuedNotifications Notification[] @relation("issuer")
+
+  // Messages
+  conversations ConversationParticipant[]
+  messages Message[]
+
+  // Saved Prompts
+  savedPrompts SavedPrompt[]
+
+  // Reports
+  reports Report[]
+
+  @@index([email])
+  @@index([username])
+}
+
+model Prompt {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  promptText  String   @db.Text
+  imageUrl    String?
+  videoUrl    String?
+  model       String?  // e.g. Midjourney, DALL-E, Stable Diffusion, Gemini, Sora
+  tags        String[]
+  views       Int      @default(0)
+
+  userId      String
+  deletedAt   DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comments Comment[]
+  likes    Like[]
+  savedBy  SavedPrompt[]
+  reports  Report[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([model])
+  @@index([deletedAt])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  imageUrl  String?
+
+  userId    String
+  promptId  String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt      Prompt        @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  commentLikes CommentLike[]
+
+  @@index([userId])
+  @@index([promptId])
+}
+
+model Like {
+  id        String   @id @default(cuid())
+
+  userId    String
+  promptId  String
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt Prompt @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, promptId])
+  @@index([userId])
+  @@index([promptId])
+}
+
+model Follows {
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  // Self-referential relations
+  follower  User @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+}
+
+model CommentLike {
+  id        String   @id @default(cuid())
+
+  userId    String
+  commentId String
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, commentId])
+  @@index([userId])
+  @@index([commentId])
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  recipientId String
+  issuerId    String
+  postId      String?
+  type        NotificationType
+  read        Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+
+  // Relations
+  recipient User  @relation("recipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  issuer    User  @relation("issuer", fields: [issuerId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId])
+  @@index([createdAt])
+  @@index([read])
+}
+
+model Conversation {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([updatedAt])
+}
+
+model ConversationParticipant {
+  id             String       @id @default(uuid())
+  userId         String
+  conversationId String
+
+  // Relations
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, conversationId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  content        String       @db.Text
+  attachmentUrl  String?
+  attachmentType String?      // 'image', 'file', etc.
+  createdAt      DateTime     @default(now())
+  senderId       String
+  conversationId String
+  read           Boolean      @default(false)
+
+  // Relations
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@index([senderId])
+}
+
+model SavedPrompt {
+  id        String   @id @default(uuid())
+  userId    String
+  promptId  String
+  createdAt DateTime @default(now())
+
+  // Relations
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt Prompt @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, promptId])
+  @@index([userId])
+  @@index([promptId])
+}
+
+model Report {
+  id        String      @id @default(uuid())
+  reason    String      @db.Text
+  status    ReportStatus @default(PENDING)
+  createdAt DateTime    @default(now())
+  userId    String      // Bildiren kullanıcı
+  promptId  String      // Bildirilen prompt
+
+  // Relations
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt Prompt @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([promptId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+
+
+
+
+
+
+
+
+
